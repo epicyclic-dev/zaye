@@ -1,3 +1,180 @@
+const std = @import("std");
+
+pub const Scalar = []const u8;
+pub const List = []Value;
+pub const Map = std.StringArrayHashMapUnmanaged(Value);
+
+pub fn Owned(comptime T: type) type {
+    return struct {
+        root: T,
+        allocator: *std.heap.ArenaAllocator,
+
+        pub fn deinit(self: @This()) void {
+            const child = self.allocator.child_allocator;
+            self.allocator.deinit();
+            child.destroy(self.allocator);
+        }
+    };
+}
+
+pub const Value = union(enum) {
+    scalar: Scalar,
+    list: List,
+    map: Map,
+
+    pub fn fromString(allocator: std.mem.Allocator, data: []const u8) !Owned(Value) {
+        var parser = try libyaml.Parser.init();
+        defer parser.deinit();
+
+        parser.setInputString(data);
+
+        var builder = try Builder.init(allocator);
+        errdefer builder.deinit();
+
+        var docseen = false;
+        while (true) {
+            var event: libyaml.Event = undefined;
+            parser.parse(&event) catch {
+                std.debug.print(
+                    "parser failed: {s}, {s}, line {d}, col: {d}\n",
+                    .{ @tagName(parser.@"error"), parser.problem.?, parser.problem_mark.line, parser.problem_mark.column },
+                );
+                return error.Failed;
+            };
+            defer event.deinit();
+
+            std.debug.print("event: {s}\n", .{@tagName(event.type)});
+
+            switch (event.type) {
+                .empty => return error.Failed,
+                .stream_start => {},
+                .stream_end => break,
+                .document_start => {},
+                .document_end => docseen = if (docseen) return error.Failed else true,
+                .alias => return error.Failed,
+                .scalar => try builder.pushScalar(event.data.scalar.value[0..event.data.scalar.length]),
+                .sequence_start => try builder.startList(),
+                .sequence_end => try builder.endList(),
+                .mapping_start => try builder.startMap(),
+                .mapping_end => try builder.endMap(),
+            }
+        }
+
+        return builder.disown();
+    }
+
+    pub const Builder = struct {
+        pub const Stack = union(enum) {
+            root,
+            list: std.ArrayListUnmanaged(Value),
+            map: struct {
+                lastkey: ?Scalar = null,
+                map: Map,
+            },
+        };
+
+        allocator: std.mem.Allocator,
+        container_stack: std.ArrayListUnmanaged(Stack),
+        root: Value,
+
+        pub fn init(child_allocator: std.mem.Allocator) std.mem.Allocator.Error!Builder {
+            const arena = try child_allocator.create(std.heap.ArenaAllocator);
+            arena.* = std.heap.ArenaAllocator.init(child_allocator);
+            const allocator = arena.allocator();
+
+            var stack = try std.ArrayListUnmanaged(Stack).initCapacity(allocator, 1);
+            stack.appendAssumeCapacity(.root);
+
+            return .{
+                .allocator = allocator,
+                .container_stack = stack,
+                .root = .{ .scalar = "" },
+            };
+        }
+
+        // this should only be run on failure.
+        pub fn deinit(self: Builder) void {
+            const arena: *std.heap.ArenaAllocator = @ptrCast(@alignCast(self.allocator.ptr));
+            const alloc = arena.child_allocator;
+            arena.deinit();
+            alloc.destroy(arena);
+        }
+
+        pub fn disown(self: *Builder) Owned(Value) {
+            return .{
+                .root = self.root,
+                .allocator = @ptrCast(@alignCast(self.allocator.ptr)),
+            };
+        }
+
+        fn pushScalar(self: *Builder, value: Scalar) !void {
+            switch (self.container_stack.items[self.container_stack.items.len - 1]) {
+                .root => {
+                    self.root = .{ .scalar = try self.allocator.dupe(u8, value) };
+                },
+                .list => |*builder| try builder.append(
+                    self.allocator,
+                    .{ .scalar = try self.allocator.dupe(u8, value) },
+                ),
+                .map => |*builder| {
+                    if (builder.lastkey) |key| {
+                        try builder.map.put(self.allocator, key, .{ .scalar = try self.allocator.dupe(u8, value) });
+                        builder.lastkey = null;
+                    } else {
+                        const duped = try self.allocator.dupe(u8, value);
+                        try builder.map.put(self.allocator, duped, undefined);
+                        builder.lastkey = duped;
+                    }
+                },
+            }
+        }
+
+        fn startList(self: *Builder) !void {
+            try self.container_stack.append(self.allocator, .{ .list = .{} });
+        }
+
+        fn endList(self: *Builder) !void {
+            var top = self.container_stack.pop();
+
+            switch (self.container_stack.items[self.container_stack.items.len - 1]) {
+                .root => self.root = .{ .list = try top.list.toOwnedSlice(self.allocator) },
+                .list => |*builder| try builder.append(
+                    self.allocator,
+                    .{ .list = try top.list.toOwnedSlice(self.allocator) },
+                ),
+                .map => |*builder| {
+                    if (builder.lastkey) |key| {
+                        try builder.map.put(self.allocator, key, .{ .list = try top.list.toOwnedSlice(self.allocator) });
+                        builder.lastkey = null;
+                    } else return error.Failed;
+                },
+            }
+        }
+
+        fn startMap(self: *Builder) !void {
+            try self.container_stack.append(self.allocator, .{ .map = .{ .map = .{} } });
+        }
+
+        fn endMap(self: *Builder) !void {
+            var top = self.container_stack.pop();
+
+            switch (self.container_stack.items[self.container_stack.items.len - 1]) {
+                .root => self.root = .{ .map = top.map.map },
+                .list => |*builder| try builder.append(
+                    self.allocator,
+                    .{ .map = top.map.map },
+                ),
+                .map => |*builder| {
+                    if (builder.lastkey) |key| {
+                        try builder.map.put(self.allocator, key, .{ .map = top.map.map });
+                        builder.lastkey = null;
+                    } else return error.Failed;
+                },
+            }
+        }
+    };
+};
+
 pub const libyaml = struct {
     pub const Encoding = enum(c_int) {
         any,
@@ -388,32 +565,3 @@ pub const libyaml = struct {
         pub extern fn yaml_parser_load(parser: *Parser, document: *Document) c_int;
     };
 };
-
-const std = @import("std");
-
-pub fn loadString(data: []const u8) bool {
-    // return api.load_string(data.ptr, data.len);
-
-    var parser = libyaml.Parser.init() catch {
-        std.debug.print("noinit\n", .{});
-        return false;
-    };
-    defer parser.deinit();
-
-    parser.setInputString(data);
-
-    var done = false;
-    while (!done) {
-        var event: libyaml.Event = undefined;
-        parser.parse(&event) catch {
-            std.debug.print("noparse\n", .{});
-            return false;
-        };
-        defer event.deinit();
-
-        std.debug.print("event: {s}\n", .{@tagName(event.type)});
-
-        done = event.type == .stream_end;
-    }
-    return true;
-}
