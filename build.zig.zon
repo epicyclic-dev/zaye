@@ -1,0 +1,15 @@
+.{
+    .name = "zaye",
+    .version = "0.0.1",
+    .paths = .{
+        "src",
+        "deps/libyaml/src",
+        "deps/libyaml/include",
+        "deps/libyaml/License",
+        "build.zig",
+        "build.zig.zon",
+        "libyaml.build.zig",
+        "LICENSE",
+    },
+    .dependencies = .{},
+}
