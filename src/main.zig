@@ -14,7 +14,14 @@ pub fn main() !void {
     );
     defer allocator.free(slurp);
 
-    const doc = try yaml.Value.fromString(allocator, slurp);
+    var diag = yaml.ParseDiagnostic{ .message = "?????" };
+    const doc = yaml.Document.fromString(allocator, slurp, &diag) catch |err| {
+        std.debug.print(
+            "Failed to parse line: {d}, col: {d}: {s}\n",
+            .{ diag.line, diag.col, diag.message },
+        );
+        return err;
+    };
     defer doc.deinit();
 
     std.debug.print("\n-----\n\n", .{});

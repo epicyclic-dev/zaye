@@ -9,7 +9,7 @@ pub fn build(b: *std.Build) void {
     const optimize = b.standardOptimizeOption(.{});
 
     const yaml_zig = b.addModule("libyaml", .{
-        .source_file = .{ .path = "src/libyaml.zig" },
+        .source_file = .{ .path = "src/yaml.zig" },
     });
     // yaml_zig.addIncludePath(.{ .path = b.getInstallPath(.header, "") });
     // _ = yaml_zig;
