@@ -297,4 +297,20 @@ pub const Value = union(enum) {
             }
         }
     };
+
+    pub fn jsonStringify(value: @This(), jws: anytype) !void {
+        switch (value) {
+            .scalar => |scalar| try jws.write(scalar),
+            .list => |list| try jws.write(list),
+            .map => |map| {
+                try jws.beginObject();
+                var it = map.iterator();
+                while (it.next()) |entry| {
+                    try jws.objectField(entry.key_ptr.*);
+                    try jws.write(entry.value_ptr.*);
+                }
+                try jws.endObject();
+            },
+        }
+    }
 };
