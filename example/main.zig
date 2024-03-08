@@ -7,11 +7,14 @@ pub fn main() !void {
     defer _ = gpa.deinit();
     const allocator = gpa.allocator();
 
-    const slurp = try std.fs.cwd().readFileAlloc(
+    const slurp = std.fs.cwd().readFileAlloc(
         allocator,
         "test.yaml",
         1024 * 1024 * 1024,
-    );
+    ) catch |err| {
+        std.debug.print("couldn't open test.yaml in the cwd\n", .{});
+        return err;
+    };
     defer allocator.free(slurp);
 
     var diag = yaml.ParseDiagnostic{ .message = "?????" };

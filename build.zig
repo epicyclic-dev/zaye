@@ -20,14 +20,17 @@ pub fn build(b: *std.Build) void {
         .optimize = optimize,
     });
 
-    const exe = b.addExecutable(.{
+    const example_step = b.step("example", "build example");
+
+    const ex_exe = b.addExecutable(.{
         .name = "yamltest",
-        .root_source_file = .{ .path = "src/main.zig" },
+        .root_source_file = .{ .path = "example/main.zig" },
         .target = target,
         .optimize = optimize,
     });
-    exe.linkLibrary(libyaml);
-    exe.addModule("yaml", yaml_zig);
+    ex_exe.linkLibrary(libyaml);
+    ex_exe.addModule("yaml", yaml_zig);
 
-    b.installArtifact(exe);
+    const install = b.addInstallArtifact(ex_exe, .{});
+    example_step.dependOn(&install.step);
 }
