@@ -27,27 +27,5 @@ pub fn main() !void {
     };
     defer doc.deinit();
 
-    std.debug.print("\n-----\n\n", .{});
-
-    dump(doc.root);
-}
-
-fn dump(val: yaml.Value) void {
-    switch (val) {
-        .scalar => |str| std.debug.print("scalar: {s}\n", .{str}),
-        .list => |list| {
-            std.debug.print("list: \n", .{});
-            for (list) |item| dump(item);
-            std.debug.print("end list\n", .{});
-        },
-        .map => |map| {
-            std.debug.print("map: \n", .{});
-            var iter = map.iterator();
-            while (iter.next()) |entry| {
-                std.debug.print("key: {s}\n", .{entry.key_ptr.*});
-                dump(entry.value_ptr.*);
-            }
-            std.debug.print("end map\n", .{});
-        },
-    }
+    try std.json.stringify(doc.root, .{}, std.io.getStdOut().writer());
 }
